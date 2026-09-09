@@ -1,0 +1,18 @@
+{
+  "name": "vimeo-unattended-capture",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Unattended real-time Vimeo presentation capture through an OBS Browser Source",
+  "scripts": {
+    "start": "node capture-vimeo-playlist.js",
+    "doctor": "node capture-vimeo-playlist.js --doctor",
+    "test-one": "node capture-vimeo-playlist.js --limit 1"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "obs-websocket-js": "5.0.6"
+  }
+}

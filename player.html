@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vimeo Capture Player</title>
+  <style>
+    html, body, #player {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+    }
+
+    #player iframe {
+      position: absolute;
+      inset: 0;
+      width: 100% !important;
+      height: 100% !important;
+      border: 0;
+    }
+
+    #status {
+      position: absolute;
+      left: 24px;
+      bottom: 20px;
+      z-index: 2;
+      padding: 8px 12px;
+      border-radius: 5px;
+      color: #ddd;
+      background: rgba(0, 0, 0, 0.72);
+      font: 18px/1.3 -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <div id="player"></div>
+  <div id="status">Loading Vimeo player…</div>
+  <script src="https://player.vimeo.com/api/player.js"></script>
+  <script>
+    (() => {
+      const params = new URLSearchParams(window.location.search);
+      const token = params.get('token');
+      const videoUrl = params.get('url');
+      const statusElement = document.getElementById('status');
+      let player;
+      let lastProgressReport = -1;
+
+      function log(message, details = {}) {
+        console.log(`[VimeoCapturePlayer] ${message}`, details);
+      }
+
+      async function report(type, data = {}) {
+        log(`report:${type}`, data);
+        try {
+          await fetch('/event', {
+            method: 'POST',
+            headers: {'content-type': 'application/json'},
+            body: JSON.stringify({token, type, data})
+          });
+        } catch (error) {
+          console.error('[VimeoCapturePlayer] report failed', error);
+        }
+      }
+
+      function setStatus(message, visible = true) {
+        log('setStatus', {message, visible});
+        statusElement.textContent = message;
+        statusElement.style.display = visible ? 'block' : 'none';
+      }
+
+      async function playVideo() {
+        log('playVideo:start');
+        try {
+          await player.setLoop(false);
+          await player.setMuted(true);
+          await report('debug', {stage: 'beforePlay'});
+          await player.play();
+          await report('debug', {stage: 'playResolved'});
+          await player.setVolume(1);
+          await player.setMuted(false);
+          log('playVideo:complete');
+          await report('debug', {stage: 'unmuted'});
+        } catch (error) {
+          await report('error', {
+            stage: 'play',
+            name: error?.name || 'Error',
+            message: error?.message || String(error)
+          });
+        }
+      }
+
+      function connectController() {
+        log('connectController:start');
+        const events = new EventSource(`/control?token=${encodeURIComponent(token)}`);
+        events.addEventListener('command', async event => {
+          const command = JSON.parse(event.data);
+          log('command', command);
+          if (command.action === 'play') await playVideo();
+          if (command.action === 'pause' && player) await player.pause();
+        });
+        events.onerror = () => log('connectController:connection-event');
+      }
+
+      async function initialize() {
+        log('initialize:start', {videoUrl});
+        if (!token || !videoUrl) {
+          setStatus('Missing capture token or Vimeo URL');
+          await report('error', {stage: 'initialize', message: 'Missing token or URL'});
+          return;
+        }
+
+        connectController();
+
+        try {
+          player = new Vimeo.Player('player', {
+            url: videoUrl,
+            autoplay: false,
+            autopause: false,
+            controls: false,
+            dnt: true,
+            loop: false,
+            muted: false,
+            responsive: true,
+            title: false,
+            byline: false,
+            portrait: false
+          });
+
+          player.on('loaded', async () => {
+            log('event:loaded');
+            try {
+              const [duration, title, id, width, height] = await Promise.all([
+                player.getDuration(),
+                player.getVideoTitle(),
+                player.getVideoId(),
+                player.getVideoWidth(),
+                player.getVideoHeight()
+              ]);
+              await player.setLoop(false);
+              await player.setMuted(false);
+              await player.setVolume(1);
+              setStatus('Ready', false);
+              await report('ready', {duration, title, id, width, height});
+            } catch (error) {
+              await report('error', {
+                stage: 'metadata',
+                name: error?.name || 'Error',
+                message: error?.message || String(error)
+              });
+            }
+          });
+
+          player.on('playing', async data => {
+            setStatus('Recording', false);
+            await report('playing', data);
+          });
+
+          player.on('timeupdate', data => {
+            const wholeSeconds = Math.floor(data.seconds || 0);
+            if (wholeSeconds >= lastProgressReport + 10) {
+              lastProgressReport = wholeSeconds;
+              report('progress', data);
+            }
+          });
+
+          player.on('ended', async data => {
+            setStatus('Complete', false);
+            await report('ended', data);
+          });
+
+          player.on('error', async error => {
+            setStatus(`Player error: ${error?.message || error?.name || 'unknown error'}`);
+            await report('error', {
+              stage: 'player',
+              name: error?.name || 'Error',
+              message: error?.message || String(error),
+              method: error?.method || null
+            });
+          });
+
+          log('initialize:complete');
+        } catch (error) {
+          setStatus(`Initialization failed: ${error?.message || String(error)}`);
+          await report('error', {
+            stage: 'initialize',
+            name: error?.name || 'Error',
+            message: error?.message || String(error)
+          });
+        }
+      }
+
+      initialize();
+    })();
+  </script>
+</body>
+</html>

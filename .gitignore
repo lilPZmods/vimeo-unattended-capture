@@ -1,0 +1,9 @@
+node_modules/
+config.json
+capture-state.json
+failed-captures.json
+playlist.m3u8
+captures/
+logs/
+*.part.mp4
+.DS_Store
