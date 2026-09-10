@@ -121,7 +121,7 @@ class CaptureChannel {
     this.events.emit(type, data);
   }
 
-  waitFor(type, timeoutMs) {
+  waitFor(type, timeoutMs = null) {
     const started = performance.now();
     this.logger.info('channel.waitFor.start', {token: this.token, type, timeoutMs});
     if (this.latest.has(type)) {
@@ -130,16 +130,21 @@ class CaptureChannel {
     }
 
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.timers.delete(timer);
-        this.events.removeListener(type, handler);
-        this.logger.recordTiming(`channel.waitFor.${type}`, started);
-        reject(new Error(`Timed out after ${timeoutMs} ms waiting for browser event: ${type}`));
-      }, timeoutMs);
-      this.timers.add(timer);
+      let timer = null;
+      if (timeoutMs != null) {
+        timer = setTimeout(() => {
+          this.timers.delete(timer);
+          this.events.removeListener(type, handler);
+          this.logger.recordTiming(`channel.waitFor.${type}`, started);
+          reject(new Error(`Timed out after ${timeoutMs} ms waiting for browser event: ${type}`));
+        }, timeoutMs);
+        this.timers.add(timer);
+      }
       const handler = data => {
-        clearTimeout(timer);
-        this.timers.delete(timer);
+        if (timer) {
+          clearTimeout(timer);
+          this.timers.delete(timer);
+        }
         this.logger.recordTiming(`channel.waitFor.${type}`, started);
         resolve(data);
       };
@@ -705,7 +710,7 @@ async function captureJob(obs, server, config, job) {
     try {
       const readyPromise = channel.waitFor('ready', config.capture.loadTimeoutMs);
       const controlPromise = channel.waitFor('controlConnected', config.capture.loadTimeoutMs);
-      const errorPromise = channel.waitFor('error', config.capture.loadTimeoutMs * 10)
+      const errorPromise = channel.waitFor('error')
         .then(error => Promise.reject(new Error(`Vimeo player error: ${JSON.stringify(error)}`)));
       errorPromise.catch(() => {});
 
